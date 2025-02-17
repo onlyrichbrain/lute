@@ -80,7 +80,8 @@ func HtmlBlockStart(t *Tree, container *ast.Node) int {
 		if t.Context.ParseOption.ProtyleWYSIWYG {
 			// Protyle WYSIWYG 模式下，只有 <div 开头的块级元素才能被解析为 HTML 块
 			// Only HTML code wrapped in `<div>` is supported to be parsed into HTML blocks https://github.com/siyuan-note/siyuan/issues/9758
-			if !bytes.HasPrefix(t.Context.currentLine, []byte("<div")) {
+			_, start := lex.TrimLeft(t.Context.currentLine)
+			if !bytes.HasPrefix(start, []byte("<div")) {
 				return 0
 			}
 		}
@@ -96,6 +97,9 @@ func HtmlBlockContinue(html *ast.Node, context *Context) int {
 	tokens := context.currentLine
 	if context.ParseOption.KramdownBlockIAL && simpleCheckIsBlockIAL(tokens) {
 		// 判断 IAL 打断
+		if context.Tip.ParentIs(ast.NodeListItem) {
+			_, tokens = lex.TrimLeft(tokens)
+		}
 		if ial := context.parseKramdownBlockIAL(tokens); 0 < len(ial) {
 			context.Tip.ID = IAL2Map(ial)["id"]
 			context.Tip.KramdownIAL = ial

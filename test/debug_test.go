@@ -18,10 +18,12 @@ import (
 
 var debugTests = []parseTest{
 
+	{"76", ":\n0", "<p>:<br />\n0</p>\n"},
+	{"75", "[foo](bar.com(baz) \"bar.com(baz)\")", "<p><a href=\"bar.com(baz)\" title=\"bar.com(baz)\">foo</a></p>\n"},
 	{"74", "https://foo.com:443/bar/baz", "<p><a href=\"https://foo.com:443/bar/baz\">https://foo.com:443/bar/baz</a></p>\n"},
-	{"73", "| $foo\\\\\\|bar$ |\n| - |", "<table>\n<thead>\n<tr>\n<th><span class=\"language-math\">foo\\\\\\|bar</span></th>\n</tr>\n</thead>\n</table>\n"},
-	{"72", "| $foo\\\\|bar$ |\n| - |", "<table>\n<thead>\n<tr>\n<th><span class=\"language-math\">foo\\\\|bar</span></th>\n</tr>\n</thead>\n</table>\n"},
-	{"71", "| $foo\\|bar$ |\n| - |", "<table>\n<thead>\n<tr>\n<th><span class=\"language-math\">foo\\|bar</span></th>\n</tr>\n</thead>\n</table>\n"},
+	{"73", "| $foo\\\\\\|bar$ |\n| - |", "<table>\n<thead>\n<tr>\n<th><span class=\"language-math\">foo\\\\|bar</span></th>\n</tr>\n</thead>\n</table>\n"},
+	{"72", "| $foo\\\\|bar$ |\n| - |", "<table>\n<thead>\n<tr>\n<th><span class=\"language-math\">foo\\|bar</span></th>\n</tr>\n</thead>\n</table>\n"},
+	{"71", "| $foo\\|bar$ |\n| - |", "<table>\n<thead>\n<tr>\n<th><span class=\"language-math\">foo|bar</span></th>\n</tr>\n</thead>\n</table>\n"},
 	{"70", "| `foo\\\\\\|bar` |\n| - |", "<table>\n<thead>\n<tr>\n<th><code>foo\\\\|bar</code></th>\n</tr>\n</thead>\n</table>\n"},
 	{"69", "| `foo\\\\|bar` |\n| - |", "<table>\n<thead>\n<tr>\n<th><code>foo\\|bar</code></th>\n</tr>\n</thead>\n</table>\n"},
 	{"68", "| `foo\\|bar` |\n| - |", "<table>\n<thead>\n<tr>\n<th><code>foo|bar</code></th>\n</tr>\n</thead>\n</table>\n"},

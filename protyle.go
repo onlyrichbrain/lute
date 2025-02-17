@@ -126,7 +126,14 @@ func (lute *Lute) BlockDOM2InlineBlockDOM(vHTML string) (vIHTML string) {
 }
 
 func (lute *Lute) Md2BlockDOM(markdown string, reserveEmptyParagraph bool) (vHTML string) {
-	tree := parse.Parse("", []byte(markdown), lute.ParseOptions)
+	vHTML, _ = lute.Md2BlockDOMTree(markdown, reserveEmptyParagraph)
+	return
+}
+
+func (lute *Lute) Md2BlockDOMTree(markdown string, reserveEmptyParagraph bool) (vHTML string, tree *parse.Tree) {
+	tree = parse.Parse("", []byte(markdown), lute.ParseOptions)
+
+	parse.TextMarks2Inlines(tree) // 先将 TextMark 转换为 Inlines https://github.com/siyuan-note/siyuan/issues/13056
 	parse.NestedInlines2FlattedSpansHybrid(tree, false)
 	if reserveEmptyParagraph {
 		ast.Walk(tree.Root, func(n *ast.Node, entering bool) ast.WalkStatus {
@@ -255,7 +262,7 @@ func (lute *Lute) BlockDOM2Tree(htmlStr string) (ret *parse.Tree) {
 	htmlStr = strings.ReplaceAll(htmlStr, "\n<wbr>\n</u>", "</u>\n<wbr>\n")
 	htmlStr = strings.ReplaceAll(htmlStr, "\n<wbr>\n</span>", "</span>\n<wbr>\n")
 
-	// Improve `inline code` markdown editing https://github.com/siyuan-note/siyuan/issues/9805
+	// Improve `inline code` markdown editing https://github.com/siyuan-note/siyuan/issues/9978
 	// spinBlockDOMTests #212
 	htmlStr = strings.ReplaceAll(htmlStr, "`<wbr></span>", "</span>`<wbr>")
 
@@ -280,8 +287,12 @@ func (lute *Lute) BlockDOM2Tree(htmlStr string) (ret *parse.Tree) {
 	htmlStr = strings.Repeat("&nbsp;", startSpaces) + htmlStr + strings.Repeat("&nbsp;", endSpaces)
 
 	// 替换结尾空白，否则 HTML 解析会产生冗余节点导致生成空的代码块
-	htmlStr = strings.ReplaceAll(htmlStr, "\t\n", "\n")
-	htmlStr = strings.ReplaceAll(htmlStr, "    \n", "  \n")
+	for strings.HasSuffix(htmlStr, "\t\n") {
+		htmlStr = strings.TrimSuffix(htmlStr, "\t\n") + "\n"
+	}
+	for strings.HasSuffix(htmlStr, "    \n") {
+		htmlStr = strings.TrimSuffix(htmlStr, "    \n") + "\n"
+	}
 
 	// 将字符串解析为 DOM 树
 	htmlRoot := lute.parseHTML(htmlStr)
@@ -345,9 +356,10 @@ func (lute *Lute) MergeSameTextMark(n *ast.Node) {
 
 		mergeWithIAL = true
 	} else {
+		previewText := n.Previous.TokensStr()
 		if ast.NodeText == n.Previous.Type &&
-			!strings.Contains(n.Previous.TokensStr(), " ") && !strings.Contains(n.Previous.TokensStr(), "\n") &&
-			"" == strings.TrimSpace(strings.ReplaceAll(n.Previous.TokensStr(), editor.Zwsp, "")) &&
+			!strings.Contains(previewText, "　") && !strings.Contains(previewText, " ") && !strings.Contains(previewText, "\n") && !strings.Contains(previewText, "\t") &&
+			"" == strings.TrimSpace(strings.ReplaceAll(strings.ReplaceAll(previewText, editor.Zwsp, ""), editor.Caret, "")) &&
 			nil != n.Previous.Previous && n.IsSameTextMarkType(n.Previous.Previous) {
 			mergeWithZwsp = true
 		} else {
@@ -377,7 +389,12 @@ func (lute *Lute) MergeSameTextMark(n *ast.Node) {
 	}
 
 	if mergeWithIAL || mergeWithZwsp {
-		n.TextMarkTextContent = n.Previous.Previous.TextMarkTextContent + n.TextMarkTextContent
+		content := n.TextMarkTextContent
+		n.TextMarkTextContent = n.Previous.Previous.TextMarkTextContent
+		if strings.Contains(n.Previous.TokensStr(), editor.Caret) {
+			n.TextMarkTextContent += editor.Caret
+		}
+		n.TextMarkTextContent += content
 		n.Previous.Previous.Unlink()
 	} else {
 		n.TextMarkTextContent = n.Previous.TextMarkTextContent + n.TextMarkTextContent
@@ -484,29 +501,37 @@ func (lute *Lute) Blocks2Ps(ivHTML string) (ovHTML string) {
 	tree := lute.BlockDOM2Tree(ivHTML)
 	node := tree.Root.FirstChild
 
-	var unlinks []*ast.Node
+	var appends, unlinks []*ast.Node
 	for n := node; nil != n; n = n.Next {
 		switch n.Type {
 		case ast.NodeHeading:
 			n.Type = ast.NodeParagraph
 		case ast.NodeBlockquote:
-			// 多选块类型转换 https://github.com/siyuan-note/siyuan/issues/4706
-			//var children []*ast.Node
-			//for c := n.LastChild; nil != c; c = c.Previous {
-			//	if ast.NodeBlockquoteMarker == c.Type {
-			//		unlinks = append(unlinks, c)
-			//		continue
-			//	}
-			//	children = append(children, c)
-			//}
-			//for _, c := range children {
-			//	n.InsertBefore(c)
-			//}
-			//unlinks = append(unlinks, n)
+			for c := n.FirstChild; nil != c; c = c.Next {
+				if ast.NodeBlockquoteMarker == c.Type {
+					unlinks = append(unlinks, c)
+					continue
+				}
+				appends = append(appends, c)
+			}
+			unlinks = append(unlinks, n)
+		case ast.NodeList:
+			for li := n.FirstChild; nil != li; li = li.Next {
+				for c := li.FirstChild; nil != c; c = c.Next {
+					if ast.NodeTaskListItemMarker != c.Type {
+						appends = append(appends, c)
+					}
+				}
+				unlinks = append(unlinks, li)
+			}
+			unlinks = append(unlinks, n)
 		}
 	}
 	for _, n := range unlinks {
 		n.Unlink()
+	}
+	for _, c := range appends {
+		tree.Root.AppendChild(c)
 	}
 	ovHTML = lute.Tree2BlockDOM(tree, lute.RenderOptions)
 	return
@@ -519,6 +544,10 @@ func (lute *Lute) Blocks2Hs(ivHTML, level string) (ovHTML string) {
 	for p := node; nil != p; p = p.Next {
 		if ast.NodeParagraph == p.Type || ast.NodeHeading == p.Type {
 			p.Type = ast.NodeHeading
+			if nil != p.FirstChild {
+				p.FirstChild.Tokens = bytes.ReplaceAll(p.FirstChild.Tokens, []byte("\n"), nil)
+				p.FirstChild.Tokens = bytes.TrimLeft(p.FirstChild.Tokens, " \t\n")
+			}
 			p.HeadingLevel, _ = strconv.Atoi(level)
 		}
 	}
@@ -666,9 +695,16 @@ func (lute *Lute) blockDOM2Md(htmlStr string) (markdown string) {
 
 func (lute *Lute) genASTByBlockDOM(n *html.Node, tree *parse.Tree) {
 	class := util.DomAttrValue(n, "class")
+
+	// Custom dom, which will be omitted when build tree https://github.com/88250/lute/issues/206
+	if strings.Contains(class, "protyle-custom") {
+		return
+	}
+
 	if "protyle-attr" == class ||
 		strings.Contains(class, "__copy") ||
-		strings.Contains(class, "protyle-linenumber__rows") {
+		strings.Contains(class, "protyle-linenumber__rows") ||
+		strings.Contains(class, "hljs") {
 		return
 	}
 
@@ -684,7 +720,7 @@ func (lute *Lute) genASTByBlockDOM(n *html.Node, tree *parse.Tree) {
 				language = languageNode.FirstChild.Data
 			}
 			tree.Context.Tip.AppendChild(&ast.Node{Type: ast.NodeCodeBlockFenceInfoMarker, CodeBlockInfo: util.StrToBytes(language)})
-			code := util.DomText(n.NextSibling)
+			code := util.DomText(n.NextSibling.LastChild)
 			if strings.HasSuffix(code, "\n\n"+editor.Caret) {
 				code = strings.TrimSuffix(code, "\n\n"+editor.Caret)
 				code += "\n" + editor.Caret + "\n"
@@ -693,9 +729,8 @@ func (lute *Lute) genASTByBlockDOM(n *html.Node, tree *parse.Tree) {
 			buf := bytes.Buffer{}
 			for i, line := range lines {
 				if strings.Contains(line, "```") {
+					line = strings.ReplaceAll(line, editor.Zwj+"```", "```")
 					line = strings.ReplaceAll(line, "```", editor.Zwj+"```")
-				} else {
-					line = strings.ReplaceAll(line, editor.Zwj, "")
 				}
 				buf.WriteString(line)
 				if i < len(lines)-1 {
@@ -1062,6 +1097,10 @@ func (lute *Lute) genASTContenteditable(n *html.Node, tree *parse.Tree) {
 			return
 		}
 
+		if html.ElementNode == n.Type {
+			node.Tokens = util.StrToBytes("<" + content + ">")
+		}
+
 		if ast.NodeLink == tree.Context.Tip.Type {
 			node.Type = ast.NodeLinkText
 		} else if ast.NodeHeading == tree.Context.Tip.Type {
@@ -1415,7 +1454,7 @@ func (lute *Lute) genASTContenteditable(n *html.Node, tree *parse.Tree) {
 			node.AppendChild(&ast.Node{Type: ast.NodeLinkText, Tokens: util.StrToBytes(alt)})
 			node.AppendChild(&ast.Node{Type: ast.NodeCloseBracket})
 			node.AppendChild(&ast.Node{Type: ast.NodeOpenParen})
-			src := util.DomAttrValue(img, "data-src")
+			src := strings.TrimSpace(util.DomAttrValue(img, "data-src"))
 			node.AppendChild(&ast.Node{Type: ast.NodeLinkDest, Tokens: util.StrToBytes(src)})
 			if title := util.DomAttrValue(img, "title"); "" != title {
 				node.AppendChild(&ast.Node{Type: ast.NodeLinkSpace})
@@ -1886,9 +1925,19 @@ func (lute *Lute) genASTContenteditable(n *html.Node, tree *parse.Tree) {
 func (lute *Lute) setBlockIAL(n *html.Node, node *ast.Node) (ialTokens []byte) {
 	node.SetIALAttr("id", node.ID)
 
+	if icon := util.DomAttrValue(n, "icon"); "" != icon {
+		node.SetIALAttr("icon", icon)
+		ialTokens = append(ialTokens, []byte(" icon=\""+icon+"\"")...)
+	}
+
 	if refcount := util.DomAttrValue(n, "refcount"); "" != refcount {
 		node.SetIALAttr("refcount", refcount)
 		ialTokens = append(ialTokens, []byte(" refcount=\""+refcount+"\"")...)
+	}
+
+	if avNames := util.DomAttrValue(n, "av-names"); "" != avNames {
+		node.SetIALAttr("av-names", avNames)
+		ialTokens = append(ialTokens, []byte(" av-names=\""+avNames+"\"")...)
 	}
 
 	if bookmark := util.DomAttrValue(n, "bookmark"); "" != bookmark {

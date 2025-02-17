@@ -208,15 +208,30 @@ func (r *ProtyleExportRenderer) renderTextMark(node *ast.Node, entering bool) as
 		}
 
 		if node.IsTextMarkType("a") {
+			sup := node.ContainTextMarkTypes("sup")
+			if sup {
+				r.Tag("sup", nil, false)
+			}
+
 			attrs := [][]string{{"href", node.TextMarkAHref}}
 			if "" != node.TextMarkATitle {
 				attrs = append(attrs, []string{"title", node.TextMarkATitle})
 			}
+			r.spanNodeAttrs(node, &attrs)
 			r.Tag("a", attrs, false)
 			r.WriteString(textContent)
 			r.WriteString("</a>")
+
+			if sup {
+				r.Tag("/sup", nil, false)
+			}
 		} else if node.IsTextMarkType("inline-memo") {
 			r.WriteString(textContent)
+
+			if node.IsNextSameInlineMemo() {
+				return ast.WalkContinue
+			}
+
 			lastRune, _ := utf8.DecodeLastRuneInString(node.TextMarkTextContent)
 			if isCJK(lastRune) {
 				r.WriteString("<sup>（")
@@ -907,9 +922,10 @@ func (r *ProtyleExportRenderer) renderCodeBlockCode(node *ast.Node, entering boo
 	r.Tag("/div", nil, false)
 
 	attrs = [][]string{{"class", "hljs"}}
-	r.contenteditable(node, &attrs)
-	r.spellcheck(&attrs)
 	r.Tag("div", attrs, false)
+	r.Tag("div", nil, false)
+	r.Tag("/div", nil, false)
+	r.Tag("div", [][]string{{"contenteditable", "false"}, {"style", "flex: 1"}, {"spellcheck", "false"}}, false)
 	if codeIsEmpty {
 		if caretInInfo {
 			r.WriteString(editor.FrontEndCaret)
@@ -917,6 +933,7 @@ func (r *ProtyleExportRenderer) renderCodeBlockCode(node *ast.Node, entering boo
 	} else {
 		r.Write(html.EscapeHTML(node.Tokens))
 	}
+	r.Tag("/div", nil, false)
 	r.Tag("/div", nil, false)
 	return ast.WalkContinue
 }
@@ -1222,13 +1239,37 @@ func (r *ProtyleExportRenderer) renderImage(node *ast.Node, entering bool) ast.W
 		attrs := [][]string{{"contenteditable", "false"}, {"data-type", "img"}, {"class", "img"}}
 		parentStyle := node.IALAttr("parent-style")
 		if "" != parentStyle { // 手动设置了位置
-			attrs = append(attrs, []string{"style", parentStyle})
+			parentStyle = strings.ReplaceAll(parentStyle, "display: block;", "")
+			parentStyle = strings.TrimSpace(parentStyle)
+			if "" != parentStyle {
+				attrs = append(attrs, []string{"style", parentStyle})
+			}
+		}
+		if r.LastOut == '\n' {
+			r.WriteString(editor.Zwsp)
 		}
 		r.Tag("span", attrs, false)
 		r.Tag("span", nil, false)
 		r.WriteString(" ")
 		r.Tag("/span", nil, false)
-		r.Tag("span", nil, false)
+		attrs = [][]string{}
+		if style := node.IALAttr("style"); "" != style {
+			styles := strings.Split(style, ";")
+			var width string
+			for _, s := range styles {
+				if strings.Contains(s, "width") {
+					width = s
+					break
+				}
+			}
+			width = strings.ReplaceAll(width, "vw", "%")
+			width = strings.TrimSpace(width)
+			if "" != width {
+				width += ";"
+				attrs = append(attrs, []string{"style", width})
+			}
+		}
+		r.Tag("span", attrs, false)
 		r.Tag("span", [][]string{{"class", "protyle-action protyle-icons"}}, false)
 		r.WriteString("<span class=\"protyle-icon protyle-icon--only\"><svg class=\"svg\"><use xlink:href=\"#iconMore\"></use></svg></span>")
 		r.Tag("/span", nil, false)
@@ -1253,9 +1294,21 @@ func (r *ProtyleExportRenderer) renderImage(node *ast.Node, entering bool) ast.W
 			titleTokens = title.Tokens
 			attrs = append(attrs, []string{"title", r.escapeRefText(string(titleTokens))})
 		}
-
 		if style := node.IALAttr("style"); "" != style {
-			attrs = append(attrs, []string{"style", style})
+			styles := strings.Split(style, ";")
+			var width string
+			for _, s := range styles {
+				if strings.Contains(s, "width") {
+					width = s
+				}
+			}
+			style = strings.ReplaceAll(style, width+";", "")
+			style = strings.ReplaceAll(style, "flex: 0 0 auto;", "")
+			style = strings.ReplaceAll(style, "display: block;", "")
+			style = strings.TrimSpace(style)
+			if "" != style {
+				attrs = append(attrs, []string{"style", style})
+			}
 		}
 		r.Tag("img", attrs, true)
 
@@ -1278,7 +1331,9 @@ func (r *ProtyleExportRenderer) renderImage(node *ast.Node, entering bool) ast.W
 
 		attrs = [][]string{{"class", "protyle-action__title"}}
 		r.Tag("span", attrs, false)
+		r.Tag("span", nil, false)
 		r.Writer.Write(html.EscapeHTML(titleTokens))
+		r.Tag("/span", nil, false)
 		r.Tag("/span", nil, false)
 		r.Tag("/span", nil, false)
 		r.Tag("span", nil, false)
@@ -1317,16 +1372,24 @@ func (r *ProtyleExportRenderer) renderLink(node *ast.Node, entering bool) ast.Wa
 }
 
 func (r *ProtyleExportRenderer) renderHTML(node *ast.Node, entering bool) ast.WalkStatus {
-	if entering {
-		r.Newline()
-		tokens := node.Tokens
-		if r.Options.Sanitize {
-			tokens = sanitize(tokens)
-		}
-		tokens = r.tagSrcPath(tokens)
-		r.Write(tokens)
-		r.Newline()
+	if !entering {
+		return ast.WalkContinue
 	}
+
+	var attrs [][]string
+	r.blockNodeAttrs(node, &attrs, "render-node")
+	tokens := node.Tokens
+	tokens = bytes.ReplaceAll(tokens, editor.CaretTokens, nil)
+	attrs = append(attrs, []string{"data-subtype", "block"})
+	r.Tag("div", attrs, false)
+	r.WriteString("<div>")
+	attrs = [][]string{{"data-content", util.BytesToStr(html.EscapeHTML(tokens))}}
+	r.Tag("protyle-html", attrs, false)
+	r.Tag("/protyle-html", nil, false)
+	r.WriteString("<span style=\"position: absolute\">" + editor.Zwsp + "</span>")
+	r.WriteString("</div>")
+	r.renderIAL(node)
+	r.Tag("/div", nil, false)
 	return ast.WalkContinue
 }
 
@@ -1355,7 +1418,9 @@ func (r *ProtyleExportRenderer) renderParagraph(node *ast.Node, entering bool) a
 		r.spellcheck(&attrs)
 		r.Tag("div", attrs, false)
 		if r.Options.ChineseParagraphBeginningSpace && ast.NodeDocument == node.Parent.Type {
-			r.WriteString("　　")
+			if !r.ParagraphContainImgOnly(node) {
+				r.WriteString("　　")
+			}
 		}
 	} else {
 		r.Tag("/div", nil, false)

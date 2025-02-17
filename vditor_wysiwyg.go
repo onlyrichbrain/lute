@@ -202,6 +202,228 @@ func (lute *Lute) adjustVditorDOM(root *html.Node) {
 	for c := root.FirstChild; nil != c; c = c.NextSibling {
 		lute.adjustVditorDOMListItemInP(c)
 	}
+
+	for c := root.FirstChild; nil != c; {
+		next := c.NextSibling
+		lute.removeCodeCode(c)
+		c = next
+	}
+
+	for c := root.FirstChild; nil != c; {
+		next := c.NextSibling
+		lute.adjustVditorDOMCodeA(c)
+		c = next
+	}
+
+	for c := root.FirstChild; nil != c; c = c.NextSibling {
+		lute.adjustCustomTag(c)
+	}
+
+	for c := root.FirstChild; nil != c; c = c.NextSibling {
+		lute.mergeSameStrong(c)
+	}
+
+	for c := root.FirstChild; nil != c; c = c.NextSibling {
+		lute.adjustTableCode(c)
+	}
+
+	for c := root.FirstChild; nil != c; c = c.NextSibling {
+		lute.adjustMath(c)
+	}
+
+	for c := root.FirstChild; nil != c; c = c.NextSibling {
+		lute.adjustNoscriptImg(c)
+	}
+}
+
+func (lute *Lute) adjustCustomTag(n *html.Node) {
+	// 将某些自定义标签转换为标准标签
+
+	if html.ElementNode == n.Type && 0 == n.DataAtom {
+		if "ucapcontent" == n.Data {
+			n.DataAtom = atom.Div
+		} else if "ucaptitle" == n.Data {
+			n.DataAtom = atom.H2
+			n.Data = "h2"
+		} else if "markerow8" == n.Data {
+			n.DataAtom = atom.Span
+		} else if "app-document-text" == n.Data {
+			n.DataAtom = atom.Div
+		}
+	}
+
+	for c := n.FirstChild; nil != c; c = c.NextSibling {
+		lute.adjustCustomTag(c)
+	}
+}
+
+func (lute *Lute) adjustNoscriptImg(n *html.Node) {
+	if nil != n.Parent && atom.Figure == n.Parent.DataAtom &&
+		atom.Noscript == n.DataAtom && nil != n.FirstChild && strings.HasPrefix(n.FirstChild.Data, "<img ") {
+		img := n.FirstChild
+		img.Unlink()
+		img.DataAtom = atom.Img
+		fragment, err := html.ParseFragment(strings.NewReader(img.Data), &html.Node{Type: html.ElementNode})
+		if nil != err || 1 > len(fragment) {
+			return
+		}
+		img = fragment[0]
+		n.InsertBefore(img)
+		var unlinks []*html.Node
+		for c := n; nil != c; c = c.NextSibling {
+			if atom.Figcaption == c.DataAtom {
+				continue
+			}
+			unlinks = append(unlinks, c)
+		}
+		for _, unlink := range unlinks {
+			unlink.Unlink()
+		}
+	}
+
+	for c := n.FirstChild; nil != c; c = c.NextSibling {
+		lute.adjustNoscriptImg(c)
+	}
+}
+
+func (lute *Lute) adjustMath(n *html.Node) {
+	class := util.DomAttrValue(n, "class")
+	if ((atom.Span == n.DataAtom || atom.Div == n.DataAtom) && strings.Contains(class, "mwe-math-element")) || (strings.Contains(class, "tex") && !strings.Contains(class, "text")) {
+		if annos := util.DomChildrenByType(n, atom.Annotation); 0 < len(annos) {
+			anno := annos[0]
+			if "application/x-tex" == util.DomAttrValue(anno, "encoding") {
+				util.SetDomAttrValue(n, "data-tex", util.DomText(anno))
+				return
+			}
+		}
+
+		if imgs := util.DomChildrenByType(n, atom.Img); 0 < len(imgs) {
+			img := imgs[0]
+			if mathContent := util.DomAttrValue(img, "alt"); "" != mathContent {
+				util.SetDomAttrValue(n, "data-tex", mathContent)
+				return
+			}
+		}
+	}
+
+	if atom.Img == n.DataAtom && strings.Contains(class, "ma-tex-img") {
+		if mathContent := util.DomAttrValue(n, "alt"); "" != mathContent {
+			n.DataAtom = atom.Span
+			util.SetDomAttrValue(n, "data-tex", mathContent)
+		}
+		return
+	}
+
+	formula := util.DomAttrValue(n, "data-formula")
+	if "" != formula {
+		if html.ElementNode == n.Type && "mjx-container" == n.Data {
+			n.DataAtom = atom.Span
+		}
+
+		util.SetDomAttrValue(n, "data-tex", formula)
+		return
+	}
+
+	if strings.Contains(class, "texhtml") {
+		if mathContent := util.DomTexhtml(n); "" != mathContent {
+			util.SetDomAttrValue(n, "data-tex", mathContent)
+			return
+		}
+	}
+
+	if strings.Contains(class, "math") {
+		scripts := util.DomChildrenByType(n, atom.Script)
+		if 0 < len(scripts) {
+			script := scripts[0]
+			if "math/tex" == util.DomAttrValue(script, "type") {
+				if mathContent := util.DomText(script); "" != mathContent {
+					util.SetDomAttrValue(n, "data-tex", mathContent)
+				}
+			}
+		}
+	}
+
+	for c := n.FirstChild; nil != c; c = c.NextSibling {
+		lute.adjustMath(c)
+	}
+}
+
+func (lute *Lute) adjustTableCode(n *html.Node) {
+	if atom.Table == n.DataAtom {
+		// 表格类型的代码块进行预处理 https://github.com/siyuan-note/siyuan/issues/11540
+		// 移除 <td class="gutter">
+		// td class="code"> 下的 <div class="container"> 改为 <pre>
+
+		tds := util.DomChildrenByType(n, atom.Td)
+		var unlinks []*html.Node
+		for _, td := range tds {
+			tdClass := util.DomAttrValue(td, "class")
+			if strings.Contains(tdClass, "gutter") {
+				unlinks = append(unlinks, td)
+				continue
+			}
+
+			// 移除 <span class="lnt"> 格式的行号 https://github.com/siyuan-note/siyuan/issues/13242
+			spans := util.DomChildrenByType(td, atom.Span)
+			removed := false
+			for _, span := range spans {
+				if "lnt" == util.DomAttrValue(span, "class") {
+					removed = true
+					break
+				}
+			}
+			if removed {
+				unlinks = append(unlinks, td)
+				continue
+			}
+
+			if strings.Contains(tdClass, "code") {
+				if c := td.FirstChild; nil != c && atom.Div == c.DataAtom {
+					c.DataAtom = atom.Pre
+					c.Data = "pre"
+					lang := util.DomAttrValue(n, "class")
+					lang = strings.ReplaceAll(lang, "syntaxhighlighter", "")
+					lang = strings.TrimSpace(lang)
+					if "" != lang {
+						util.SetDomAttrValue(c, "class", lang)
+					}
+					for div := c.FirstChild; nil != div; div = div.NextSibling {
+						div.DataAtom = atom.Code
+						div.Data = "code"
+					}
+				}
+			}
+		}
+
+		for _, unlink := range unlinks {
+			unlink.Unlink()
+		}
+	}
+
+	for c := n.FirstChild; nil != c; c = c.NextSibling {
+		lute.adjustTableCode(c)
+	}
+}
+
+func (lute *Lute) mergeSameStrong(n *html.Node) {
+	for c := n.FirstChild; nil != c; {
+		next := c.NextSibling
+		if nil != next && atom.Strong == c.DataAtom && atom.Strong == next.DataAtom {
+			for cc := next.FirstChild; nil != cc; {
+				nextChild := cc.NextSibling
+				cc.Unlink()
+				c.AppendChild(cc)
+				cc = nextChild
+			}
+			next.Unlink()
+			next = c.NextSibling
+		}
+		c = next
+	}
+
+	for c := n.FirstChild; nil != c; c = c.NextSibling {
+		lute.mergeSameStrong(c)
+	}
 }
 
 // adjustVditorDOMListList 用于将 ul.ul 调整为 ul.li.ul。
@@ -460,6 +682,63 @@ func (lute *Lute) adjustVditorDOMListItemInP(n *html.Node) {
 
 	for c := n.FirstChild; c != nil; c = c.NextSibling {
 		lute.adjustVditorDOMListItemInP(c)
+	}
+}
+
+func (lute *Lute) removeCodeCode(n *html.Node) {
+	if atom.Code == n.DataAtom && nil != n.FirstChild && atom.Code == n.FirstChild.DataAtom {
+		// code.code 重复嵌套，则不处理外层 code
+		for c := n.FirstChild; nil != c; {
+			next := c.NextSibling
+			c.Unlink()
+			n.InsertBefore(c)
+			c = next
+		}
+		n.Unlink()
+		return
+	}
+
+	for c := n.FirstChild; c != nil; {
+		next := c.NextSibling
+		lute.removeCodeCode(c)
+		c = next
+	}
+}
+func (lute *Lute) adjustVditorDOMCodeA(n *html.Node) {
+	// https://github.com/siyuan-note/siyuan/issues/11370
+	if atom.Code == n.DataAtom && nil != n.FirstChild && atom.A == n.FirstChild.DataAtom && n.FirstChild == n.LastChild {
+		// code.a 的情况将 a 移到 code 外层，即 a.code
+		prev := n.PrevSibling
+		next := n.NextSibling
+		parent := n.Parent
+		a := n.FirstChild
+		a.Unlink()
+		n.Unlink()
+
+		var anchorTexts []*html.Node
+		for c := a.FirstChild; nil != c; c = c.NextSibling {
+			anchorTexts = append(anchorTexts, c)
+			c.Unlink()
+		}
+		for _, anchorText := range anchorTexts {
+			n.AppendChild(anchorText)
+		}
+		a.AppendChild(n)
+
+		if nil != prev {
+			prev.InsertAfter(a)
+		} else if nil != next {
+			next.InsertBefore(a)
+		} else if nil != parent {
+			parent.AppendChild(a)
+		}
+		return
+	}
+
+	for c := n.FirstChild; c != nil; {
+		next := c.NextSibling
+		lute.adjustVditorDOMCodeA(c)
+		c = next
 	}
 }
 

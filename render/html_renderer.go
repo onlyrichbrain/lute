@@ -220,6 +220,7 @@ func (r *HtmlRenderer) renderTextMark(node *ast.Node, entering bool) ast.WalkSta
 			if "" != node.TextMarkATitle {
 				attrs = append(attrs, []string{"title", node.TextMarkATitle})
 			}
+			r.spanNodeAttrs(node, &attrs)
 			r.Tag("a", attrs, false)
 			r.WriteString(textContent)
 			r.WriteString("</a>")
@@ -750,7 +751,12 @@ func (r *HtmlRenderer) renderInlineMathCloseMarker(node *ast.Node, entering bool
 
 func (r *HtmlRenderer) renderInlineMathContent(node *ast.Node, entering bool) ast.WalkStatus {
 	if entering {
-		r.Write(html.EscapeHTML(node.Tokens))
+		tokens := node.Tokens
+		if node.ParentIs(ast.NodeTableCell) {
+			// Improve the `|` render in the inline math in the table https://github.com/Vanessa219/vditor/issues/1550
+			tokens = bytes.ReplaceAll(tokens, []byte("\\|"), []byte("|"))
+		}
+		r.Write(html.EscapeHTML(tokens))
 	}
 	return ast.WalkContinue
 }
@@ -1078,7 +1084,9 @@ func (r *HtmlRenderer) renderParagraph(node *ast.Node, entering bool) ast.WalkSt
 		var attrs [][]string
 		attrs = append(attrs, node.KramdownIAL...)
 		if r.Options.ChineseParagraphBeginningSpace && ast.NodeDocument == node.Parent.Type {
-			attrs = append(attrs, []string{"class", "indent--2"})
+			if !r.ParagraphContainImgOnly(node) {
+				attrs = append(attrs, []string{"class", "indent--2"})
+			}
 		}
 		r.Tag("p", attrs, false)
 	} else {

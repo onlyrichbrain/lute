@@ -255,6 +255,10 @@ func (r *ProtyleExportDocxRenderer) renderHTMLTag0(node *ast.Node, currentTextMa
 			r.WriteString(node.TextMarkTextContent)
 		}
 
+		if node.IsNextSameInlineMemo() {
+			return
+		}
+
 		lastRune, _ := utf8.DecodeLastRuneInString(node.TextMarkTextContent)
 		if isCJK(lastRune) {
 			if entering {
@@ -1209,7 +1213,9 @@ func (r *ProtyleExportDocxRenderer) renderParagraph(node *ast.Node, entering boo
 		attrs = append(attrs, node.KramdownIAL...)
 		r.Tag("p", attrs, false)
 		if r.Options.ChineseParagraphBeginningSpace && ast.NodeDocument == node.Parent.Type {
-			r.WriteString("　　")
+			if !r.ParagraphContainImgOnly(node) {
+				r.WriteString("　　")
+			}
 		}
 	} else {
 		r.Tag("/p", nil, false)
@@ -1371,20 +1377,8 @@ func (r *ProtyleExportDocxRenderer) renderHeading(node *ast.Node, entering bool)
 		r.Newline()
 		level := headingLevel[node.HeadingLevel : node.HeadingLevel+1]
 		r.WriteString("<h" + level)
-		id := HeadingID(node)
-		if r.Options.ToC || r.Options.HeadingID || r.Options.KramdownBlockIAL {
-			r.WriteString(" id=\"" + id + "\"")
-			if r.Options.KramdownBlockIAL {
-				if "id" != r.Options.KramdownIALIDRenderName && 0 < len(node.KramdownIAL) {
-					r.WriteString(" " + r.Options.KramdownIALIDRenderName + "=\"" + node.KramdownIAL[0][1] + "\"")
-				}
-				if 1 < len(node.KramdownIAL) {
-					exceptID := node.KramdownIAL[1:]
-					for _, attr := range exceptID {
-						r.WriteString(" " + attr[0] + "=\"" + attr[1] + "\"")
-					}
-				}
-			}
+		for _, attr := range node.KramdownIAL {
+			r.WriteString(" " + attr[0] + "=\"" + attr[1] + "\"")
 		}
 		r.WriteString(">")
 	} else {

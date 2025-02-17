@@ -22,15 +22,21 @@ import (
 func GetTextMarkTextDataWithoutEscapeSingleQuote(n *html.Node) (content string) {
 	content = DomText(n)
 	content = strings.ReplaceAll(content, editor.Zwsp, "")
-	content = strings.TrimPrefix(content, "\n")
 	content = strings.TrimSuffix(content, "\n")
 	content = html.EscapeHTMLStr(content)
+	for strings.Contains(content, "\n\n") {
+		content = strings.ReplaceAll(content, "\n\n", "\n")
+	}
 	return
 }
 
 func GetTextMarkTextData(n *html.Node) (content string) {
 	content = GetTextMarkTextDataWithoutEscapeSingleQuote(n)
+	content = strings.TrimPrefix(content, "\n")
 	content = strings.ReplaceAll(content, "'", "&apos;")
+	for strings.Contains(content, "\n\n") {
+		content = strings.ReplaceAll(content, "\n\n", "\n")
+	}
 	return
 }
 
@@ -72,6 +78,66 @@ func GetTextMarkFileAnnotationRefData(n *html.Node) (id string) {
 	return
 }
 
+func DomChildByTypeAndClass(n *html.Node, dataAtom atom.Atom, class ...string) *html.Node {
+	if nil == n {
+		return nil
+	}
+
+	if n.DataAtom == dataAtom {
+		for _, c := range class {
+			if strings.Contains(DomAttrValue(n, "class"), c) {
+				return n
+			}
+		}
+	}
+	for c := n.FirstChild; nil != c; c = c.NextSibling {
+		ret := DomChildByTypeAndClass(c, dataAtom, class...)
+		if nil != ret {
+			return ret
+		}
+	}
+	return nil
+}
+
+func DomChildrenByType(n *html.Node, dataAtom atom.Atom) (ret []*html.Node) {
+	// 递归遍历所有子节点
+	for c := n.FirstChild; nil != c; c = c.NextSibling {
+		if c.DataAtom == dataAtom {
+			ret = append(ret, c)
+		}
+		ret = append(ret, DomChildrenByType(c, dataAtom)...)
+	}
+	return
+}
+
+func DomExistChildByType(n *html.Node, dataAtom ...atom.Atom) bool {
+	if nil == n {
+		return false
+	}
+
+	for _, a := range dataAtom {
+		if nil != domChildByType(n, a) {
+			return true
+		}
+	}
+
+	for c := n.FirstChild; nil != c; c = c.NextSibling {
+		if DomExistChildByType(c, dataAtom...) {
+			return true
+		}
+	}
+	return false
+}
+
+func domChildByType(n *html.Node, dataAtom atom.Atom) *html.Node {
+	for c := n.FirstChild; nil != c; c = c.NextSibling {
+		if c.DataAtom == dataAtom {
+			return c
+		}
+	}
+	return nil
+}
+
 func DomHTML(n *html.Node) []byte {
 	if nil == n {
 		return nil
@@ -79,6 +145,53 @@ func DomHTML(n *html.Node) []byte {
 	buf := &bytes.Buffer{}
 	html.Render(buf, n)
 	return bytes.ReplaceAll(buf.Bytes(), []byte(editor.Zwsp), nil)
+}
+
+func DomTexhtml(n *html.Node) string {
+	buf := &bytes.Buffer{}
+	if html.TextNode == n.Type {
+		buf.WriteString(n.Data)
+		return buf.String()
+	}
+	for child := n.FirstChild; nil != child; child = child.NextSibling {
+		domTexhtml0(child, buf)
+	}
+	return buf.String()
+}
+
+func domTexhtml0(n *html.Node, buffer *bytes.Buffer) {
+	if nil == n {
+		return
+	}
+
+	switch n.DataAtom {
+	case 0:
+		buffer.WriteString(escapeMathSymbol(n.Data))
+	case atom.Sup:
+		buffer.WriteString("^{")
+	case atom.Sub:
+		buffer.WriteString("_{")
+	}
+
+	for child := n.FirstChild; nil != child; child = child.NextSibling {
+		domTexhtml0(child, buffer)
+	}
+
+	switch n.DataAtom {
+	case atom.Sup:
+		buffer.WriteString("}")
+	case atom.Sub:
+		buffer.WriteString("}")
+	}
+}
+
+func escapeMathSymbol(s string) string {
+	// 转义 Tex 公式中的符号，比如 _ ^ { }
+	s = strings.ReplaceAll(s, "_", "\\_")
+	s = strings.ReplaceAll(s, "^", "\\^")
+	s = strings.ReplaceAll(s, "{", "\\{")
+	s = strings.ReplaceAll(s, "}", "\\}")
+	return s
 }
 
 func DomText(n *html.Node) string {
@@ -133,6 +246,8 @@ func domText0(n *html.Node, buffer *bytes.Buffer) {
 		}
 	case atom.Br:
 		buffer.WriteString("\n")
+	case atom.P:
+		buffer.WriteString("\n\n")
 	}
 
 	for child := n.FirstChild; nil != child; child = child.NextSibling {
@@ -146,6 +261,21 @@ func IsTempMarkSpan(n *html.Node) bool {
 
 }
 
+func SetDomAttrValue(n *html.Node, attrName, attrVal string) {
+	if nil == n {
+		return
+	}
+
+	for _, attr := range n.Attr {
+		if attr.Key == attrName {
+			attr.Val = attrVal
+			return
+		}
+	}
+
+	n.Attr = append(n.Attr, &html.Attribute{Key: attrName, Val: attrVal})
+}
+
 func DomAttrValue(n *html.Node, attrName string) string {
 	if nil == n {
 		return ""
@@ -157,6 +287,19 @@ func DomAttrValue(n *html.Node, attrName string) string {
 		}
 	}
 	return ""
+}
+
+func ExistDomAttr(n *html.Node, attrName string) bool {
+	if nil == n {
+		return false
+	}
+
+	for _, attr := range n.Attr {
+		if attr.Key == attrName {
+			return true
+		}
+	}
+	return false
 }
 
 func DomCustomAttrs(n *html.Node) (ret map[string]string) {

@@ -23,13 +23,15 @@ type JSONRenderer struct {
 }
 
 func NewJSONRenderer(tree *parse.Tree, options *Options) Renderer {
-	// 渲染器剔除语法树块级 IAL 节点 https://github.com/88250/protyle/issues/1
-	var ials []*ast.Node
+	var ials []*ast.Node // 渲染器剔除语法树块级 IAL 节点
 	ast.Walk(tree.Root, func(n *ast.Node, entering bool) ast.WalkStatus {
-		if !entering || ast.NodeKramdownBlockIAL != n.Type {
+		if !entering {
 			return ast.WalkContinue
 		}
-		ials = append(ials, n)
+
+		if ast.NodeKramdownBlockIAL == n.Type {
+			ials = append(ials, n)
+		}
 		return ast.WalkContinue
 	})
 	for _, ial := range ials {
@@ -49,6 +51,7 @@ func (r *JSONRenderer) renderNode(node *ast.Node, entering bool) ast.WalkStatus 
 		node.Data, node.TypeStr = util.BytesToStr(node.Tokens), node.Type.String()
 		node.Properties = ial2Map(node.KramdownIAL)
 		delete(node.Properties, "refcount")
+		delete(node.Properties, "av-names")
 		data, err := json.Marshal(node)
 		node.Data, node.TypeStr = "", ""
 		node.Properties = nil

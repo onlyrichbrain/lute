@@ -16,8 +16,61 @@ import (
 	"github.com/88250/lute"
 )
 
+func TestGetLinkDest(t *testing.T) {
+	luteEngine := lute.New()
+
+	dest := luteEngine.GetLinkDest("www.bing.com/search?q=\"你好\"")
+	if "http://www.bing.com/search?q=%22%E4%BD%A0%E5%A5%BD%22" != dest {
+		t.Fatalf("get link dest failed")
+	}
+
+	dest = luteEngine.GetLinkDest("www.bing.com/search?q=@Hello")
+	if "http://www.bing.com/search?q=@Hello" != dest {
+		t.Fatalf("get link dest failed")
+	}
+
+	dest = luteEngine.GetLinkDest("www.bing.com/search?q=\"Hello\"")
+	if "http://www.bing.com/search?q=%22Hello%22" != dest {
+		t.Fatalf("get link dest failed")
+	}
+
+	dest = luteEngine.GetLinkDest("https://foo.com/bar:baz")
+	if "https://foo.com/bar:baz" != dest {
+		t.Fatalf("get link dest failed")
+	}
+
+	dest = luteEngine.GetLinkDest("[foo](bar.com)")
+	if "bar.com" != dest {
+		t.Fatalf("get link dest failed")
+	}
+
+	dest = luteEngine.GetLinkDest("[foo](siyuan://blocks/20220817180757-c57m8qi)")
+	if "siyuan://blocks/20220817180757-c57m8qi" != dest {
+		t.Fatalf("get link dest failed")
+	}
+
+	dest = luteEngine.GetLinkDest("[foo](https://abc.to/)")
+	if "https://abc.to/" != dest {
+		t.Fatalf("get link dest failed")
+	}
+
+	dest = luteEngine.GetLinkDest("[foo](https://abc.pm/)")
+	if "https://abc.pm/" != dest {
+		t.Fatalf("get link dest failed")
+	}
+
+	dest = luteEngine.GetLinkDest("file://D:\\Admin\\Downloads\\隔壁叔叔过年还在玩思源.jpg")
+	if "file://D:\\Admin\\Downloads\\隔壁叔叔过年还在玩思源.jpg" != dest {
+		t.Fatalf("get link dest failed")
+	}
+}
+
 func TestIsValidLinkDest(t *testing.T) {
 	luteEngine := lute.New()
+
+	if luteEngine.IsValidLinkDest("[foo](bar.com)") {
+		t.Fatalf("check link dest failed")
+	}
 
 	if !luteEngine.IsValidLinkDest("siyuan://blocks/20220817180757-c57m8qi") {
 		t.Fatalf("check link dest failed")

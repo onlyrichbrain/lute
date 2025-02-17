@@ -56,7 +56,7 @@ func (t *Tree) finalParseBlockIAL() {
 
 			if t.Context.ParseOption.ProtyleWYSIWYG && t.Context.ParseOption.Spin &&
 				ast.NodeDocument != n.Type && nil != n.Next && ast.NodeKramdownBlockIAL != n.Next.Type && "" != n.Next.ID {
-				// 这个节点是 spin 后新生成的，将 n.Next 的 ID 和属性赋予它，并认为 n.Next 是新节点
+				// 这个节点是 spin 后新生成的，将 n.Next 的 ID 和属性赋予它，并认为 n.Next 是新节点 https://github.com/siyuan-note/siyuan/issues/5723
 				n.ID = n.Next.ID
 				n.KramdownIAL = n.Next.KramdownIAL
 				if "" == n.IALAttr("updated") {
@@ -334,6 +334,9 @@ type Options struct {
 	GFMTaskListItem bool
 	// GFMStrikethrough 设置是否打开“GFM 删除线”支持。
 	GFMStrikethrough bool
+	// GFMStrikethrough1 设置是否打开“GFM 删除线”一个标记符 ~ 支持。
+	// GFM 删除线支持两个标记符 ~~，这个选项用于支持一个标记符的删除线。
+	GFMStrikethrough1 bool
 	// GFMAutoLink 设置是否打开“GFM 自动链接”支持。
 	GFMAutoLink bool
 	// Footnotes 设置是否打开“脚注”支持。
@@ -358,6 +361,8 @@ type Options struct {
 	VditorSV bool
 	// Protyle 所见即所得支持。
 	ProtyleWYSIWYG bool
+	// InlineMath 设置是否开启行级公式 $foo$ 支持。
+	InlineMath bool
 	// InlineMathAllowDigitAfterOpenMarker 设置内联数学公式是否允许起始 $ 后紧跟数字 https://github.com/b3log/lute/issues/38
 	InlineMathAllowDigitAfterOpenMarker bool
 	// Setext 设置是否解析 Setext 标题 https://github.com/88250/lute/issues/50
@@ -384,6 +389,10 @@ type Options struct {
 	Sup bool
 	// Sub 设置是否打开 ~下标~ 支持。
 	Sub bool
+	// InlineAsterisk 设置是否打开行级 * 语法支持（*foo* 和 **foo**）。
+	InlineAsterisk bool
+	// InlineUnderscore 设置是否打开行级 _ 语法支持（_foo_ 和 __foo__）。
+	InlineUnderscore bool
 	// GitConflict 设置是否打开 Git 冲突标记支持。
 	GitConflict bool
 	// LinkRef 设置是否打开“链接引用”支持。
@@ -396,13 +405,14 @@ type Options struct {
 	DataImage bool
 	// TextMark 设置是否打开通用行级节点解析支持。
 	TextMark bool
-	// HTMLTag2TextMark 设置是否打开 HTML 某些标签解析为 TextMark 节点支持。目前仅支持 <u> 和 <kbd> 标签。
-	// 这个开关主要用于兼容 Markdown 输入 API 上 https://github.com/siyuan-note/siyuan/issues/6039
-	// 不用于 Protyle 自旋过程 https://github.com/siyuan-note/siyuan/issues/5877
+	// HTMLTag2TextMark 设置是否打开 HTML 某些标签解析为 TextMark 节点支持。
+	// 目前仅支持 <u>、<kbd>、<sub>、<sup>、<strong>/<b>、<em>/<i>、<s>/<del>/<strike> 和 <mark>。
 	HTMLTag2TextMark bool
-	// Spin 设置是否打开自旋解析支持，该选项仅用于 Spin 内部过程，外部请勿设置或使用。
+	// Spin 设置是否打开自旋解析支持，该选项仅用于 Spin 内部过程，设置时请注意使用场景。
+	//
 	// 该选项的引入主要为了解决 finalParseBlockIAL 过程中是否需要移动 IAL 节点的问题，只有处于自旋过程中才需要移动 IAL 节点
-	// 其他情况（比如 API 输入 markdown https://github.com/siyuan-note/siyuan/issues/6725）无需移动处理
+	// 其他情况，比如标题块软换行分块 https://github.com/siyuan-note/siyuan/issues/5723 以及软换行空行分块 https://ld246.com/article/1703839312585
+	// 的场景需要移动 IAL 节点，但是 API 输入 markdown https://github.com/siyuan-note/siyuan/issues/6725）无需移动
 	Spin bool
 }
 
@@ -410,21 +420,24 @@ var EmojiLock = sync.Mutex{}
 
 func NewOptions() *Options {
 	return &Options{
-		GFMTable:         true,
-		GFMTaskListItem:  true,
-		GFMStrikethrough: true,
-		GFMAutoLink:      true,
-		Footnotes:        true,
-		Emoji:            true,
-		AliasEmoji:       EmojiAliasUnicode,
-		EmojiAlias:       EmojiUnicodeAlias,
-		//EmojiSite:         "https://cdn.jsdelivr.net/npm/vditor/dist/images/emoji",
-		EmojiSite:         "https://unpkg.com/vditor/dist/images/emoji", // 表情图片从 `cdn.jsdelivr.net` 切换到 `unpkg.com` https://github.com/88250/lute/issues/171
+		GFMTable:          true,
+		GFMTaskListItem:   true,
+		GFMStrikethrough:  true,
+		GFMStrikethrough1: true,
+		GFMAutoLink:       true,
+		Footnotes:         true,
+		Emoji:             true,
+		AliasEmoji:        EmojiAliasUnicode,
+		EmojiAlias:        EmojiUnicodeAlias,
+		EmojiSite:         "https://cdn.jsdelivr.net/npm/vditor/dist/images/emoji",
+		InlineMath:        true,
 		Setext:            true,
 		YamlFrontMatter:   true,
 		BlockRef:          false,
 		FileAnnotationRef: false,
 		Mark:              false,
+		InlineAsterisk:    true,
+		InlineUnderscore:  true,
 		KramdownBlockIAL:  false,
 		HeadingID:         true,
 		LinkRef:           true,

@@ -11,6 +11,7 @@
 package parse
 
 import (
+	"bytes"
 	"strings"
 
 	"github.com/88250/lute/ast"
@@ -54,7 +55,8 @@ func NestedInlines2FlattedSpansHybrid(tree *Tree, isExportMd bool) {
 				return ast.WalkContinue
 			}
 			n.InsertBefore(img)
-			if nil == n.ChildByType(ast.NodeLinkText) {
+			linkText := n.ChildByType(ast.NodeLinkText)
+			if nil == linkText || 1 > len(bytes.TrimSpace(linkText.Tokens)) {
 				if openBracket := n.ChildByType(ast.NodeOpenBracket); nil != openBracket {
 					if dest := n.ChildByType(ast.NodeLinkDest); nil != dest {
 						openBracket.InsertAfter(&ast.Node{Type: ast.NodeLinkText, Tokens: dest.Tokens})
@@ -167,6 +169,9 @@ func NestedInlines2FlattedSpansHybrid(tree *Tree, isExportMd bool) {
 					n.Parent.InsertBefore(span)
 				} else {
 					n.InsertBefore(span)
+					if ast.NodeText == n.Type {
+						unlinks = append(unlinks, n)
+					}
 				}
 			}
 		case ast.NodeTextMark:
@@ -186,8 +191,11 @@ func NestedInlines2FlattedSpansHybrid(tree *Tree, isExportMd bool) {
 					tags = append(tags, n.TextMarkType)
 					n.TextMarkType = strings.Join(tags, " ")
 				}
+			} else {
+				if nil == n.Next || n.Next.IsCloseMarker() {
+					tags = tags[:len(tags)-1]
+				}
 			}
-
 			return ast.WalkContinue
 		}
 		return ast.WalkContinue
@@ -214,7 +222,8 @@ func NestedInlines2FlattedSpans(tree *Tree, isExportMd bool) {
 				return ast.WalkContinue
 			}
 			n.InsertBefore(img)
-			if nil == n.ChildByType(ast.NodeLinkText) {
+			linkText := n.ChildByType(ast.NodeLinkText)
+			if nil == linkText || 1 > len(bytes.TrimSpace(linkText.Tokens)) {
 				if openBracket := n.ChildByType(ast.NodeOpenBracket); nil != openBracket {
 					if dest := n.ChildByType(ast.NodeLinkDest); nil != dest {
 						openBracket.InsertAfter(&ast.Node{Type: ast.NodeLinkText, Tokens: dest.Tokens})
@@ -222,6 +231,10 @@ func NestedInlines2FlattedSpans(tree *Tree, isExportMd bool) {
 				}
 			}
 		} else if ast.NodeBackslash == n.Type {
+			if n.ParentIs(ast.NodeTableCell) {
+				return ast.WalkContinue
+			}
+
 			// 不再需要反斜杠转义节点
 			if c := n.FirstChild; nil != c {
 				tokens := html.UnescapeHTML(c.Tokens)
@@ -252,7 +265,9 @@ func NestedInlines2FlattedSpans(tree *Tree, isExportMd bool) {
 	ast.Walk(tree.Root, func(n *ast.Node, entering bool) ast.WalkStatus {
 		switch n.Type {
 		case ast.NodeBackslash:
-			unlinks = append(unlinks, n)
+			if !n.ParentIs(ast.NodeTableCell) {
+				unlinks = append(unlinks, n)
+			}
 		case ast.NodeCodeSpan:
 			processNestedNode(n, "code", &tags, &unlinks, entering)
 		case ast.NodeTag:
@@ -346,8 +361,34 @@ func NestedInlines2FlattedSpans(tree *Tree, isExportMd bool) {
 					n.Parent.InsertBefore(span)
 				} else {
 					n.InsertBefore(span)
+					if ast.NodeText == n.Type {
+						unlinks = append(unlinks, n)
+					}
 				}
 			}
+		case ast.NodeTextMark:
+			if 1 > len(tags) {
+				return ast.WalkContinue
+			}
+
+			if entering {
+				contain := false
+				for _, tag := range tags {
+					if n.IsTextMarkType(tag) {
+						contain = true
+						break
+					}
+				}
+				if !contain {
+					tags = append(tags, n.TextMarkType)
+					n.TextMarkType = strings.Join(tags, " ")
+				}
+			} else {
+				if nil == n.Next || n.IsCloseMarker() {
+					tags = tags[:len(tags)-1]
+				}
+			}
+			return ast.WalkContinue
 		}
 		return ast.WalkContinue
 	})
@@ -361,14 +402,91 @@ func processNestedNode(n *ast.Node, tag string, tags *[]string, unlinks *[]*ast.
 	if entering {
 		*tags = append(*tags, tag)
 	} else {
-		*tags = (*tags)[:len(*tags)-1]
+		if 0 < len(*tags) {
+			*tags = (*tags)[:len(*tags)-1]
+		}
+
 		*unlinks = append(*unlinks, n)
 		for c := n.FirstChild; nil != c; {
 			next := c.Next
-			if ast.NodeTextMark == c.Type {
+			if ast.NodeTextMark == c.Type || ast.NodeText == c.Type {
 				n.InsertBefore(c)
+			} else if ast.NodeLinkDest == c.Type {
+				if nil != n.Previous && ast.NodeTextMark == n.Previous.Type {
+					n.Previous.TextMarkAHref = string(c.Tokens)
+				}
 			}
 			c = next
 		}
 	}
+}
+
+func TextMarks2Inlines(tree *Tree) {
+	inlines := func(content string) (ret []*ast.Node) {
+		subTree := Inline("", []byte(content), tree.Context.ParseOption)
+		for c := subTree.Root.FirstChild.FirstChild; nil != c; c = c.Next {
+			ret = append(ret, c)
+		}
+		return
+	}
+
+	ast.Walk(tree.Root, func(n *ast.Node, entering bool) ast.WalkStatus {
+		if !entering {
+			return ast.WalkContinue
+		}
+
+		if ast.NodeTextMark == n.Type {
+			switch n.TextMarkType {
+			case "sup":
+				n.Type = ast.NodeSup
+				n.PrependChild(&ast.Node{Type: ast.NodeSupOpenMarker})
+				nodes := inlines(n.TextMarkTextContent)
+				for _, node := range nodes {
+					n.AppendChild(node)
+				}
+				n.AppendChild(&ast.Node{Type: ast.NodeSupCloseMarker})
+			case "sub":
+				n.Type = ast.NodeSub
+				n.PrependChild(&ast.Node{Type: ast.NodeSubOpenMarker})
+				nodes := inlines(n.TextMarkTextContent)
+				for _, node := range nodes {
+					n.AppendChild(node)
+				}
+				n.AppendChild(&ast.Node{Type: ast.NodeSubCloseMarker})
+			case "em":
+				n.Type = ast.NodeEmphasis
+				n.PrependChild(&ast.Node{Type: ast.NodeEmA6kOpenMarker})
+				nodes := inlines(n.TextMarkTextContent)
+				for _, node := range nodes {
+					n.AppendChild(node)
+				}
+				n.AppendChild(&ast.Node{Type: ast.NodeEmA6kCloseMarker})
+			case "strong":
+				n.Type = ast.NodeStrong
+				n.PrependChild(&ast.Node{Type: ast.NodeStrongA6kOpenMarker})
+				nodes := inlines(n.TextMarkTextContent)
+				for _, node := range nodes {
+					n.AppendChild(node)
+				}
+				n.AppendChild(&ast.Node{Type: ast.NodeStrongA6kCloseMarker})
+			case "mark":
+				n.Type = ast.NodeMark
+				n.PrependChild(&ast.Node{Type: ast.NodeMark2OpenMarker})
+				nodes := inlines(n.TextMarkTextContent)
+				for _, node := range nodes {
+					n.AppendChild(node)
+				}
+				n.AppendChild(&ast.Node{Type: ast.NodeMark2CloseMarker})
+			case "s":
+				n.Type = ast.NodeStrikethrough
+				n.PrependChild(&ast.Node{Type: ast.NodeStrikethrough2OpenMarker})
+				nodes := inlines(n.TextMarkTextContent)
+				for _, node := range nodes {
+					n.AppendChild(node)
+				}
+				n.AppendChild(&ast.Node{Type: ast.NodeStrikethrough2CloseMarker})
+			}
+		}
+		return ast.WalkContinue
+	})
 }

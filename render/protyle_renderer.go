@@ -248,7 +248,13 @@ func (r *ProtyleRenderer) renderTextMark(node *ast.Node, entering bool) ast.Walk
 	} else {
 		r.WriteString("</span>")
 		if parse.ContainTextMark(node, "code", "kbd", "tag") {
-			r.WriteString(editor.Zwsp)
+			if text := node.NextNodeText(); "" != text {
+				if !strings.HasPrefix(text, editor.Zwsp) {
+					r.WriteString(editor.Zwsp)
+				}
+			} else {
+				r.WriteString(editor.Zwsp)
+			}
 		}
 		if parse.ContainTextMark(node, "code", "inline-math", "kbd") {
 			if r.Options.AutoSpace {
@@ -416,6 +422,7 @@ func (r *ProtyleRenderer) renderIFrame(node *ast.Node, entering bool) ast.WalkSt
 	if entering {
 		var attrs [][]string
 		r.blockNodeAttrs(node, &attrs, "iframe")
+		attrs = append(attrs, []string{"loading", "lazy"})
 		r.Tag("div", attrs, false)
 		r.Tag("div", [][]string{{"class", "iframe-content"}}, false)
 		tokens := bytes.ReplaceAll(node.Tokens, editor.CaretTokens, nil)
@@ -651,6 +658,11 @@ func (r *ProtyleRenderer) renderKramdownBlockIAL(node *ast.Node, entering bool) 
 }
 
 func (r *ProtyleRenderer) renderKramdownSpanIAL(node *ast.Node, entering bool) ast.WalkStatus {
+	if !entering {
+		if nil != node.Previous && ast.NodeImage == node.Previous.Type && nil != node.Next && ast.NodeImage == node.Next.Type {
+			r.WriteString(editor.Zwsp)
+		}
+	}
 	return ast.WalkContinue
 }
 
@@ -911,8 +923,12 @@ func (r *ProtyleRenderer) renderCodeBlockCode(node *ast.Node, entering bool) ast
 	r.Tag("/div", nil, false)
 
 	attrs = [][]string{{"class", "hljs"}}
+	r.Tag("div", attrs, false)
+	r.Tag("div", nil, false)
+	r.Tag("/div", nil, false)
+	attrs = [][]string{}
 	r.contenteditable(node, &attrs)
-	// Spell check should be disabled inside inline and block code https://github.com/siyuan-note/siyuan/issues/9672
+	attrs = append(attrs, []string{"style", "flex: 1"})
 	attrs = append(attrs, []string{"spellcheck", "false"})
 	r.Tag("div", attrs, false)
 	if codeIsEmpty {
@@ -926,6 +942,7 @@ func (r *ProtyleRenderer) renderCodeBlockCode(node *ast.Node, entering bool) ast
 		tokens = bytes.ReplaceAll(tokens, []byte("__mark@__"), []byte("</span>"))
 		r.Write(tokens)
 	}
+	r.Tag("/div", nil, false)
 	r.Tag("/div", nil, false)
 	return ast.WalkContinue
 }
@@ -1229,33 +1246,43 @@ func (r *ProtyleRenderer) renderImage(node *ast.Node, entering bool) ast.WalkSta
 	if entering {
 		if nil == node.Previous || editor.Caret == node.Previous.Text() ||
 			(node.ParentIs(ast.NodeTableCell) && nil != node.Previous && nil == node.Previous.Previous) {
-			if nil != node.Next {
-				if ast.NodeKramdownSpanIAL == node.Next.Type {
-					if !bytes.Contains(node.Next.Tokens, []byte("display: block")) {
-						r.WriteString(editor.Zwsp)
-					}
-				} else {
-					r.WriteString(editor.Zwsp)
-				}
-			} else {
-				r.WriteString(editor.Zwsp)
-			}
+			r.WriteString(editor.Zwsp)
 		}
 
 		attrs := [][]string{{"contenteditable", "false"}, {"data-type", "img"}, {"class", "img"}}
 		parentStyle := node.IALAttr("parent-style")
 		if "" != parentStyle { // 手动设置了位置
-			attrs = append(attrs, []string{"style", parentStyle})
+			parentStyle = strings.ReplaceAll(parentStyle, "display: block;", "")
+			parentStyle = strings.TrimSpace(parentStyle)
+			if "" != parentStyle {
+				attrs = append(attrs, []string{"style", parentStyle})
+			}
 		}
-		if !strings.Contains(parentStyle, "display") && !strings.Contains(parentStyle, "block") &&
-			r.LastOut == '\n' {
+		if r.LastOut == '\n' {
 			r.WriteString(editor.Zwsp)
 		}
 		r.Tag("span", attrs, false)
 		r.Tag("span", nil, false)
 		r.WriteString(" ")
 		r.Tag("/span", nil, false)
-		r.Tag("span", nil, false)
+		attrs = [][]string{}
+		if style := node.IALAttr("style"); "" != style {
+			styles := strings.Split(style, ";")
+			var width string
+			for _, s := range styles {
+				if strings.Contains(s, "width") {
+					width = s
+					break
+				}
+			}
+			width = strings.ReplaceAll(width, "vw", "%")
+			width = strings.TrimSpace(width)
+			if "" != width {
+				width += ";"
+				attrs = append(attrs, []string{"style", width})
+			}
+		}
+		r.Tag("span", attrs, false)
 		r.Tag("span", [][]string{{"class", "protyle-action protyle-icons"}}, false)
 		r.WriteString("<span class=\"protyle-icon protyle-icon--only\"><svg class=\"svg\"><use xlink:href=\"#iconMore\"></use></svg></span>")
 		r.Tag("/span", nil, false)
@@ -1268,7 +1295,7 @@ func (r *ProtyleRenderer) renderImage(node *ast.Node, entering bool) ast.WalkSta
 		dataSrcTokens := destTokens
 		dataSrc := util.BytesToStr(dataSrcTokens)
 		src := util.BytesToStr(r.LinkPath(destTokens))
-		attrs := [][]string{{"src", src}, {"data-src", dataSrc}}
+		attrs := [][]string{{"src", src}, {"data-src", dataSrc}, {"loading", "lazy"}}
 		alt := node.ChildByType(ast.NodeLinkText)
 		if nil != alt && 0 < len(alt.Tokens) {
 			attrs = append(attrs, []string{"alt", util.BytesToStr(alt.Tokens)})
@@ -1280,9 +1307,21 @@ func (r *ProtyleRenderer) renderImage(node *ast.Node, entering bool) ast.WalkSta
 			titleTokens = title.Tokens
 			attrs = append(attrs, []string{"title", r.escapeRefText(string(titleTokens))})
 		}
-
 		if style := node.IALAttr("style"); "" != style {
-			attrs = append(attrs, []string{"style", style})
+			styles := strings.Split(style, ";")
+			var width string
+			for _, s := range styles {
+				if strings.Contains(s, "width") {
+					width = s
+				}
+			}
+			style = strings.ReplaceAll(style, width+";", "")
+			style = strings.ReplaceAll(style, "flex: 0 0 auto;", "")
+			style = strings.ReplaceAll(style, "display: block;", "")
+			style = strings.TrimSpace(style)
+			if "" != style {
+				attrs = append(attrs, []string{"style", style})
+			}
 		}
 		r.Tag("img", attrs, true)
 
@@ -1305,21 +1344,20 @@ func (r *ProtyleRenderer) renderImage(node *ast.Node, entering bool) ast.WalkSta
 
 		attrs = [][]string{{"class", "protyle-action__title"}}
 		r.Tag("span", attrs, false)
+		r.Tag("span", nil, false)
 		r.Writer.Write(html.EscapeHTML(titleTokens))
+		r.Tag("/span", nil, false)
 		r.Tag("/span", nil, false)
 		r.Tag("/span", nil, false)
 		r.Tag("span", nil, false)
 		r.WriteString(" ")
 		r.Tag("/span", nil, false)
 		r.Tag("/span", nil, false)
-		if nil == node.Next || editor.Caret == node.Next.Text() {
+		if nil == node.Next || editor.Caret == node.Next.Text() || ast.NodeImage == node.Next.Type {
 			r.WriteString(editor.Zwsp)
 			return ast.WalkContinue
 		}
 		if ast.NodeKramdownSpanIAL == node.Next.Type && (nil == node.Next.Next || editor.Caret == node.Next.Next.Text()) {
-			if bytes.Contains(node.Next.Tokens, []byte("display: block")) {
-				return ast.WalkContinue
-			}
 			r.WriteString(editor.Zwsp)
 			return ast.WalkContinue
 		}
@@ -1440,7 +1478,11 @@ func (r *ProtyleRenderer) renderText(node *ast.Node, entering bool) ast.WalkStat
 			}
 			r.Write(tokens)
 		} else {
-			r.Write(html.EscapeHTML(tokens))
+			tokens = html.EscapeHTML(tokens)
+			if node.ParentIs(ast.NodeTableCell) {
+				tokens = bytes.ReplaceAll(tokens, []byte("|"), []byte("&#124;"))
+			}
+			r.Write(tokens)
 		}
 	}
 	return ast.WalkContinue
@@ -1824,6 +1866,7 @@ func (r *ProtyleRenderer) renderIAL(node *ast.Node) {
 		avs = html.EscapeHTMLStr(avs)
 		r.Tag("div", [][]string{{"class", "protyle-attr--av"}}, false)
 		r.WriteString("<svg><use xlink:href=\"#iconDatabase\"></use></svg>")
+		r.WriteString(node.IALAttr("av-names"))
 		r.Tag("/div", nil, false)
 	}
 
@@ -1853,6 +1896,8 @@ func (r *ProtyleRenderer) renderTextMarkAttrs(node *ast.Node) (attrs [][]string)
 			if node.ParentIs(ast.NodeTableCell) {
 				href = strings.ReplaceAll(href, "\\|", "|")
 			}
+			// 超链接元素地址中存在 `"` 字符时粘贴无法正常解析 https://github.com/siyuan-note/siyuan/issues/11385
+			href = strings.ReplaceAll(href, "\"", "&amp;quot;")
 
 			attrs = append(attrs, []string{"data-href", href})
 			if "" != node.TextMarkATitle {

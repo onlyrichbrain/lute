@@ -222,12 +222,12 @@ func (t *Tree) parseGFMAutoLink0(node *ast.Node) {
 		j = i
 		for ; j < length; j++ {
 			token = tokens[j]
-			if (lex.IsWhitespace(token) || lex.ItemLess == token) || (!lex.IsASCIIPunct(token) && !lex.IsASCIILetterNum(token)) {
+			if lex.IsWhitespace(token) || lex.ItemLess == token {
 				break
 			}
 
 			// 判断端口后部分是否为数字
-			if tmp := bytes.ReplaceAll(url, []byte("://"), nil); bytes.Contains(tmp, []byte(":")) {
+			if tmp := bytes.ReplaceAll(url, []byte("://"), nil); bytes.Contains(tmp, []byte(":")) && !bytes.Contains(tmp, []byte("/")) {
 				tmp = tmp[bytes.Index(tmp, []byte(":"))+1:]
 				if !bytes.Contains(tmp, []byte("/")) && !lex.IsDigit(token) && lex.ItemSlash != token {
 					break
@@ -356,8 +356,9 @@ func (t *Tree) parseGFMAutoLink0(node *ast.Node) {
 			}
 
 			// 如果之前的 ) 或者 ; 没有命中处理，则进行结尾的标点符号规则处理，即标点不计入链接，需要剔掉
-			if !trimmed && lex.IsASCIIPunct(lastToken) && lex.ItemSlash != lastToken &&
-				'}' != lastToken && '{' != lastToken /* 自动链接解析结尾 } 问题 https://github.com/88250/lute/issues/4 */ {
+			// Trailing punctuation (specifically, ?, !, ., ,, :, *, _, and ~) will not be considered part of the autolink, though they may be included in the interior of the link:
+			// https://github.github.com/gfm/#example-624
+			if !trimmed && ('?' == lastToken || '!' == lastToken || '.' == lastToken || ',' == lastToken || ':' == lastToken || '*' == lastToken || '_' == lastToken || '~' == lastToken) {
 				path = path[:length-1]
 				i--
 			}
@@ -381,25 +382,44 @@ func (t *Tree) parseGFMAutoLink0(node *ast.Node) {
 		addr = append(addr, port...)
 		addr = append(addr, path...)
 		linkText := addr
-		if bytes.HasPrefix(linkText, []byte("https://github.com/")) && bytes.Contains(linkText, []byte("/issues/")) {
-			// 优化 GitHub Issues 自动链接文本 https://github.com/88250/lute/issues/161
-			repo := linkText[len("https://github.com/"):]
-			repo = repo[:bytes.Index(repo, []byte("/issues/"))]
-			num := bytes.Split(linkText, []byte("/issues/"))[1]
-			num = bytes.Split(num, []byte("?"))[0]
-			if 0 < len(num) {
-				isDigit := true
-				for _, d := range num {
-					if !lex.IsDigit(d) {
-						isDigit = false
-						break
+		if bytes.HasPrefix(linkText, []byte("https://github.com/")) {
+			if bytes.Contains(linkText, []byte("/issues/")) {
+				// 优化 GitHub Issues 自动链接文本 https://github.com/88250/lute/issues/161
+				repo := linkText[len("https://github.com/"):]
+				repo = repo[:bytes.Index(repo, []byte("/issues/"))]
+				num := bytes.Split(linkText, []byte("/issues/"))[1]
+				num = bytes.Split(num, []byte("?"))[0]
+				if 0 < len(num) {
+					isDigit := true
+					for _, d := range num {
+						if !lex.IsDigit(d) {
+							isDigit = false
+							break
+						}
+					}
+					if isDigit {
+						linkText = []byte("Issue #" + string(num) + " · " + string(repo))
 					}
 				}
-				if isDigit {
-					linkText = []byte("Issue #" + string(num) + " · " + string(repo))
+			} else if bytes.Contains(linkText, []byte("/pull/")) {
+				// 优化 GitHub Pull Requests 自动链接文本 https://github.com/88250/lute/issues/208
+				repo := linkText[len("https://github.com/"):]
+				repo = repo[:bytes.Index(repo, []byte("/pull/"))]
+				num := bytes.Split(linkText, []byte("/pull/"))[1]
+				num = bytes.Split(num, []byte("?"))[0]
+				if 0 < len(num) {
+					isDigit := true
+					for _, d := range num {
+						if !lex.IsDigit(d) {
+							isDigit = false
+							break
+						}
+					}
+					if isDigit {
+						linkText = []byte("Pull Request #" + string(num) + " · " + string(repo))
+					}
 				}
 			}
-
 		}
 
 		link := t.newLink(ast.NodeLink, linkText, html.EncodeDestination(dest), nil, 2)

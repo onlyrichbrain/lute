@@ -146,6 +146,18 @@ func (t *Tree) processEmphasis(stackBottom *delimiter, ctx *InlineContext) {
 				}
 			}
 
+			if !t.Context.ParseOption.InlineAsterisk {
+				if lex.ItemAsterisk == closercc {
+					break
+				}
+			}
+
+			if !t.Context.ParseOption.InlineUnderscore {
+				if lex.ItemUnderscore == closercc {
+					break
+				}
+			}
+
 			if t.Context.ParseOption.Mark {
 				if lex.ItemEqual == closercc && opener.num != closer.num {
 					break
@@ -194,7 +206,7 @@ func (t *Tree) processEmphasis(stackBottom *delimiter, ctx *InlineContext) {
 						emStrongDelMark.Type = ast.NodeSub
 						openMarker.Type = ast.NodeSubOpenMarker
 						closeMarker.Type = ast.NodeSubCloseMarker
-					} else if t.Context.ParseOption.GFMStrikethrough {
+					} else if t.Context.ParseOption.GFMStrikethrough && t.Context.ParseOption.GFMStrikethrough1 {
 						emStrongDelMark.Type = ast.NodeStrikethrough
 						openMarker.Type = ast.NodeStrikethrough1OpenMarker
 						closeMarker.Type = ast.NodeStrikethrough1CloseMarker
@@ -376,6 +388,19 @@ func (t *Tree) scanDelims(ctx *InlineContext) *delimiter {
 				canOpen = false
 				canClose = false
 				if t.Context.ParseOption.GFMStrikethrough && 2 == delimitersCount {
+					canOpen = isLeftFlanking
+					canClose = isRightFlanking
+				}
+			} else {
+				canOpen = isLeftFlanking
+				canClose = isRightFlanking
+			}
+		} else if t.Context.ParseOption.GFMStrikethrough && lex.ItemTilde == token {
+			if 1 == delimitersCount {
+				if !t.Context.ParseOption.GFMStrikethrough1 {
+					canOpen = false
+					canClose = false
+				} else {
 					canOpen = isLeftFlanking
 					canClose = isRightFlanking
 				}

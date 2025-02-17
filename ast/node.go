@@ -218,12 +218,130 @@ func randStr(length int) string {
 	return string(b)
 }
 
+func (n *Node) Marker(entering bool) (ret string) {
+	switch n.Type {
+	case NodeTagOpenMarker, NodeTagCloseMarker:
+		if entering {
+			return "#"
+		}
+	case NodeEmA6kOpenMarker, NodeEmA6kCloseMarker:
+		if entering {
+			return "*"
+		}
+	case NodeEmU8eOpenMarker, NodeEmU8eCloseMarker:
+		if entering {
+			return "_"
+		}
+	case NodeStrongA6kOpenMarker, NodeStrongA6kCloseMarker:
+		if entering {
+			return "**"
+		}
+	case NodeStrongU8eOpenMarker, NodeStrongU8eCloseMarker:
+		if entering {
+			return "__"
+		}
+	case NodeStrikethrough2OpenMarker, NodeStrikethrough2CloseMarker:
+		if entering {
+			return "~~"
+		}
+	case NodeSupOpenMarker, NodeSupCloseMarker:
+		if entering {
+			return "^"
+		}
+	case NodeSubOpenMarker, NodeSubCloseMarker:
+		if entering {
+			return "~"
+		}
+	case NodeInlineMathOpenMarker, NodeInlineMathCloseMarker:
+		if entering {
+			return "$"
+		}
+	case NodeKbdOpenMarker:
+		if entering {
+			return "<kbd>"
+		}
+	case NodeKbdCloseMarker:
+		if entering {
+			return "</kbd>"
+		}
+	case NodeUnderlineOpenMarker:
+		if entering {
+			return "<u>"
+		}
+	case NodeUnderlineCloseMarker:
+		if entering {
+			return "</u>"
+		}
+	case NodeMark2OpenMarker, NodeMark2CloseMarker:
+		if entering {
+			return "=="
+		}
+	case NodeBang:
+		if entering {
+			return "!"
+		}
+	case NodeOpenBracket:
+		if entering {
+			return "["
+		}
+	case NodeCloseBracket:
+		if entering {
+			return "]"
+		}
+	case NodeOpenParen:
+		if entering {
+			return "("
+		}
+	case NodeCloseParen:
+		if entering {
+			return ")"
+		}
+	}
+
+	return ""
+}
+
+func (n *Node) ContainTextMarkTypes(types ...string) bool {
+	nodeTypes := strings.Split(n.TextMarkType, " ")
+	for _, typ := range types {
+		for _, nodeType := range nodeTypes {
+			if typ == nodeType {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func (n *Node) IsTextMarkType(typ string) bool {
 	types := strings.Split(n.TextMarkType, " ")
 	for _, t := range types {
 		if typ == t {
 			return true
 		}
+	}
+	return false
+}
+
+func (n *Node) IsNextSameInlineMemo() bool {
+	if nil == n {
+		return false
+	}
+
+	var nextInlineMemo *Node
+	for node := n.Next; nil != node; node = node.Next {
+		if nil == n.Next || NodeKramdownSpanIAL == node.Type || nil == node.Next || NodeKramdownSpanIAL == node.Next.Type {
+			continue
+		}
+
+		if NodeTextMark == node.Type && node.IsTextMarkType("inline-memo") {
+			nextInlineMemo = node
+			break
+		}
+	}
+
+	if nil != nextInlineMemo && n.TextMarkInlineMemoContent == nextInlineMemo.TextMarkInlineMemoContent {
+		return true
 	}
 	return false
 }
@@ -297,14 +415,6 @@ func (n *Node) SetIALAttr(name, value string) {
 			kv[1] = value
 			return
 		}
-	}
-
-	if typ := n.IALAttr("type"); "doc" == typ {
-		// 让 type="doc" 保持在最后一个
-		n.RemoveIALAttr("type")
-		n.KramdownIAL = append(n.KramdownIAL, []string{name, value})
-		n.KramdownIAL = append(n.KramdownIAL, []string{"type", "doc"})
-		return
 	}
 	n.KramdownIAL = append(n.KramdownIAL, []string{name, value})
 }
@@ -435,8 +545,9 @@ func (n *Node) Content() (ret string) {
 			buf.Write(n.Tokens)
 		case NodeTextMark:
 			if "" != n.TextMarkTextContent {
-				if n.IsTextMarkType("code") {
+				if n.IsTextMarkType("code") || n.IsTextMarkType("tag") {
 					// 搜索代码内容转义问题 https://github.com/siyuan-note/siyuan/issues/5927
+					// 搜索标签内容转义问题 https://github.com/siyuan-note/siyuan/issues/13919
 					buf.WriteString(html.UnescapeString(n.TextMarkTextContent))
 				} else {
 					buf.WriteString(n.TextMarkTextContent)
@@ -684,11 +795,16 @@ func (n *Node) List() (ret []*Node) {
 // ParentIs 判断 n 的类型是否在指定的 nodeTypes 类型列表内。
 func (n *Node) ParentIs(nodeType NodeType, nodeTypes ...NodeType) bool {
 	types := append(nodeTypes, nodeType)
+	deep := 0
 	for p := n.Parent; nil != p; p = p.Parent {
 		for _, pt := range types {
 			if pt == p.Type {
 				return true
 			}
+		}
+		deep++
+		if 128 < deep {
+			break
 		}
 	}
 	return false
@@ -725,6 +841,18 @@ func (n *Node) IsMarker() bool {
 		NodeMathBlockOpenMarker, NodeMathBlockCloseMarker, NodeInlineMathOpenMarker, NodeInlineMathCloseMarker, NodeYamlFrontMatterOpenMarker, NodeYamlFrontMatterCloseMarker,
 		NodeMark1OpenMarker, NodeMark1CloseMarker, NodeMark2OpenMarker, NodeMark2CloseMarker, NodeTagOpenMarker, NodeTagCloseMarker,
 		NodeSuperBlockOpenMarker, NodeSuperBlockLayoutMarker, NodeSuperBlockCloseMarker, NodeSupOpenMarker, NodeSupCloseMarker, NodeSubOpenMarker, NodeSubCloseMarker:
+		return true
+	}
+	return false
+}
+
+// IsCloseMarker 判断 n 是否为闭合标记符。
+func (n *Node) IsCloseMarker() bool {
+	switch n.Type {
+	case NodeHeadingC8hMarker, NodeBlockquoteMarker, NodeCodeBlockFenceCloseMarker, NodeEmA6kCloseMarker, NodeEmU8eCloseMarker,
+		NodeStrongA6kCloseMarker, NodeStrongU8eCloseMarker, NodeCodeSpanCloseMarker, NodeStrikethrough1CloseMarker, NodeStrikethrough2CloseMarker,
+		NodeMathBlockCloseMarker, NodeInlineMathCloseMarker, NodeYamlFrontMatterCloseMarker, NodeMark1CloseMarker, NodeMark2CloseMarker,
+		NodeTagCloseMarker, NodeSuperBlockCloseMarker, NodeSupCloseMarker, NodeSubCloseMarker:
 		return true
 	}
 	return false
@@ -1000,6 +1128,12 @@ const (
 	// 自定义块 https://github.com/siyuan-note/siyuan/issues/8418 ;;;info
 
 	NodeCustomBlock NodeType = 560 // 自定义块
+
+	// HTML 标签，在无法使用 Markdown 标记符的情况下直接使用 HTML 标签
+
+	NodeHTMLTag      NodeType = 570 // HTML 标签
+	NodeHTMLTagOpen  NodeType = 571 // 开始 HTML 标签
+	NodeHTMLTagClose NodeType = 572 // 结束 HTML 标签
 
 	NodeTypeMaxVal NodeType = 1024 // 节点类型最大值
 )

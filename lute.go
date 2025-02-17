@@ -25,7 +25,7 @@ import (
 	"github.com/gopherjs/gopherjs/js"
 )
 
-const Version = "1.7.5"
+const Version = "1.7.6"
 
 // Lute 描述了 Lute 引擎的顶层使用入口。
 type Lute struct {
@@ -151,6 +151,11 @@ func (lute *Lute) Space(text string) string {
 
 // IsValidLinkDest 判断 str 是否为合法的链接地址。
 func (lute *Lute) IsValidLinkDest(str string) bool {
+	str = strings.TrimSpace(str)
+	if strings.HasPrefix(str, "[") {
+		return false
+	}
+
 	luteEngine := New()
 	luteEngine.ParseOptions.GFMAutoLink = true
 	tree := parse.Parse("", []byte(str), luteEngine.ParseOptions)
@@ -164,6 +169,27 @@ func (lute *Lute) IsValidLinkDest(str string) bool {
 		return false
 	}
 	return true
+}
+
+func (lute *Lute) GetLinkDest(str string) string {
+	str = strings.TrimSpace(str)
+	if strings.HasPrefix(str, "file://") {
+		return str
+	}
+
+	luteEngine := New()
+	luteEngine.ParseOptions.GFMAutoLink = true
+	tree := parse.Parse("", []byte(str), luteEngine.ParseOptions)
+	if nil == tree.Root.FirstChild || nil == tree.Root.FirstChild.FirstChild {
+		return ""
+	}
+	if tree.Root.LastChild != tree.Root.FirstChild {
+		return ""
+	}
+	if ast.NodeLink != tree.Root.FirstChild.FirstChild.Type {
+		return ""
+	}
+	return tree.Root.FirstChild.FirstChild.ChildByType(ast.NodeLinkDest).TokensStr()
 }
 
 // GetEmojis 返回 Emoji 别名和对应 Unicode 字符的字典列表。
@@ -319,6 +345,10 @@ func (lute *Lute) SetGFMStrikethrough(b bool) {
 	lute.ParseOptions.GFMStrikethrough = b
 }
 
+func (lute *Lute) SetGFMStrikethrough1(b bool) {
+	lute.ParseOptions.GFMStrikethrough1 = b
+}
+
 func (lute *Lute) SetGFMAutoLink(b bool) {
 	lute.ParseOptions.GFMAutoLink = b
 }
@@ -407,6 +437,10 @@ func (lute *Lute) SetVditorIR(b bool) {
 func (lute *Lute) SetVditorSV(b bool) {
 	lute.ParseOptions.VditorSV = b
 	lute.RenderOptions.VditorSV = b
+}
+
+func (lute *Lute) SetInlineMath(b bool) {
+	lute.ParseOptions.InlineMath = b
 }
 
 func (lute *Lute) SetInlineMathAllowDigitAfterOpenMarker(b bool) {
@@ -517,6 +551,14 @@ func (lute *Lute) SetSub(b bool) {
 	lute.ParseOptions.Sub = b
 }
 
+func (lute *Lute) SetInlineAsterisk(b bool) {
+	lute.ParseOptions.InlineAsterisk = b
+}
+
+func (lute *Lute) SetInlineUnderscore(b bool) {
+	lute.ParseOptions.InlineUnderscore = b
+}
+
 func (lute *Lute) SetGitConflict(b bool) {
 	lute.ParseOptions.GitConflict = b
 }
@@ -592,6 +634,7 @@ func (lute *Lute) SetJSRenderers(options map[string]map[string]*js.Object) {
 			panic("unknown ext renderer func [" + rendererType + "]")
 		}
 
+		extRenderer := extRenderer // https://go.dev/blog/loopvar-preview
 		renderFuncs := extRenderer.Interface().(map[string]interface{})
 		for funcName := range renderFuncs {
 			nodeType := "Node" + funcName[len("render"):]
